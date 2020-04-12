@@ -3,6 +3,7 @@ using EXILED;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Policy;
 using System.Text;
 using System.Threading.Tasks;
 using MEC;
@@ -21,6 +22,27 @@ namespace Common_Utils
         public override string getName => "Common-Utils";
         public bool EnableRandomInv;
         public Random Gen = new Random();
+        public List<RoleType> TeslaIgnoredRoles = new List<RoleType>();
+        public int PatchCounter;
+
+        public bool Scp173Healing = true;
+        public int Scp173HealAmount = 150;
+        
+        public bool Scp049Healing = true;
+        public int Scp049HealAmount = 25;
+        public float Scp049HealPow = 1.25f;
+
+        public bool Scp0492Healing = true;
+        public int Scp0492HealAmount = 25;
+        
+        public bool Scp106Healing = true;
+        public int Scp106HealAmount = 75;
+        
+        public bool Scp096Healing = true;
+        public int Scp096Heal = 150;
+        
+        public bool Scp939Healing = true;
+        public int Scp939Heal = 125;
 
         // classes be like mega stupid amirite ladies?
 
@@ -132,8 +154,18 @@ namespace Common_Utils
 
         public override void OnDisable()
         {
-            Events.Scp914UpgradeEvent -= EventHandler.SCP914Upgrade;
             Events.PlayerJoinEvent -= EventHandler.PlayerJoin;
+            Events.Scp914UpgradeEvent -= EventHandler.SCP914Upgrade;
+            Events.RoundStartEvent -= EventHandler.RoundStart;
+            Events.PlayerSpawnEvent -= EventHandler.OnPlayerSpawn;
+            Events.RoundEndEvent -= EventHandler.OnRoundEnd;
+            Events.WaitingForPlayersEvent -= EventHandler.OnWaitingForPlayers;
+            Events.TriggerTeslaEvent -= EventHandler.OnTriggerTesla;
+            Events.PlayerDeathEvent -= EventHandler.OnPlayerDeath;
+            Events.PocketDimDeathEvent -= EventHandler.OnPocketDeath;
+            Events.Scp096EnrageEvent -= EventHandler.OnEnrage;
+            Events.Scp096CalmEvent -= EventHandler.OnCalm;
+            Events.PlayerHurtEvent -= EventHandler.OnPlayerHurt;
 
             Timing.KillCoroutines(cor);
 
@@ -146,10 +178,7 @@ namespace Common_Utils
             scp914Roles = null;
             EventHandler = null;
             Instance = null;
-            if (HarmonyInstance != null)
-            {
-                HarmonyInstance.UnpatchAll();
-            }
+            HarmonyInstance?.UnpatchAll();
         }
 
         public static void DebugBoi(string line)
@@ -167,10 +196,28 @@ namespace Common_Utils
             
             Instance = this;
 
-            HarmonyInstance = HarmonyInstance.Create("exiled.common.utils");
+            HarmonyInstance = HarmonyInstance.Create($"exiled.common.utils-{PatchCounter}");
+            PatchCounter++;
             HarmonyInstance.PatchAll();
 
             bool enable914Configs = Config.GetBool("util_914_enable", true);
+
+            try
+            {
+                List<string> teslaIgnoredStrings =
+                    KConf.ExiledConfiguration.GetListStringValue(Config.GetString("util_tesla_ignores", "Tutorial"));
+
+                foreach (string s in teslaIgnoredStrings)
+                {
+                    RoleType type = (RoleType) Enum.Parse(typeof(RoleType), s);
+                    if (!TeslaIgnoredRoles.Contains(type))
+                        TeslaIgnoredRoles.Add(type);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Error($"Tesla ignored roles error: {e}");
+            }
 
             if (enable914Configs)
             {
@@ -324,16 +371,37 @@ namespace Common_Utils
             float clearRagdollTimer = Config.GetFloat("util_cleanup_interval", 250f);
             bool clearOnlyPocket = Config.GetBool("util_cleanup_only_pocket", false);
             bool clearItems = Config.GetBool("util_cleanup_items", true);
+            Scp049Healing = Config.GetBool("util_049_healing", true);
+            Scp049HealAmount = Config.GetInt("util_049_heal_amount", 25);
+            Scp049HealPow = Config.GetFloat("util_049_heal_power", 1.25f);
+            Scp0492Healing = Config.GetBool("util_0492_healing", true);
+            Scp0492HealAmount = Config.GetInt("util_0492_heal_amount", 25);
+            Scp096Healing = Config.GetBool("util_096_healing", true);
+            Scp096Heal = Config.GetInt("util_096_heal_amount", 150);
+            Scp106Healing = Config.GetBool("util_106_healing", true);
+            Scp106HealAmount = Config.GetInt("util_106_heal_amount", 75);
+            Scp173Healing = Config.GetBool("util_173_healing", true);
+            Scp173HealAmount = Config.GetInt("util_173_heal_amount", 150);
+            Scp939Healing = Config.GetBool("util_939_healing", true);
+            Scp939Heal = Config.GetInt("util_939_heal_amount", 125);
+            
 
-            EventHandler = new EventHandlers(upgradeHeldItems, scp914Roles, scp914Items, roleHealth, broadcastMessage, joinMessage, boradcastTime, boradcastSeconds, joinMessageTime, Inventories, autoNukeTime, enableAutoNuke, enable914Configs, enableJoinmessage, enableBroadcasting, enableCustomInv, clearRagdolls, clearRagdollTimer, clearOnlyPocket, clearItems)
+            EventHandler = new EventHandlers(upgradeHeldItems, scp914Roles, scp914Items, roleHealth, broadcastMessage, joinMessage, boradcastTime, boradcastSeconds, joinMessageTime, Inventories, autoNukeTime, enableAutoNuke, enable914Configs, enableJoinmessage, enableBroadcasting, enableCustomInv, clearRagdolls, clearRagdollTimer, clearOnlyPocket, TeslaIgnoredRoles, clearItems)
             { 
                 LockAutoNuke = Config.GetBool("util_autonuke_lock", false)
             };
             Events.PlayerJoinEvent += EventHandler.PlayerJoin;
             Events.Scp914UpgradeEvent += EventHandler.SCP914Upgrade;
             Events.RoundStartEvent += EventHandler.RoundStart;
+            Events.PlayerSpawnEvent += EventHandler.OnPlayerSpawn;
             Events.RoundEndEvent += EventHandler.OnRoundEnd;
             Events.WaitingForPlayersEvent += EventHandler.OnWaitingForPlayers;
+            Events.TriggerTeslaEvent += EventHandler.OnTriggerTesla;
+            Events.PlayerDeathEvent += EventHandler.OnPlayerDeath;
+            Events.PocketDimDeathEvent += EventHandler.OnPocketDeath;
+            Events.Scp096EnrageEvent += EventHandler.OnEnrage;
+            Events.Scp096CalmEvent += EventHandler.OnCalm;
+            Events.PlayerHurtEvent += EventHandler.OnPlayerHurt;
 
             Log.Info("Common-Utils Loaded! Created by the EXILED Team.");
 

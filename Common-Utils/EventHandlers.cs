@@ -43,9 +43,10 @@ namespace Common_Utils
         public float ClearRagInterval;
         public bool ClearOnlyPocket;
         public bool ClearItems;
+        public List<RoleType> TeslaIgnoredRoles = new List<RoleType>();
 
         // T H I C K constructor
-        public EventHandlers(bool uh, Dictionary<Scp914PlayerUpgrade, Scp914Knob> roles, Dictionary<Scp914ItemUpgrade, Scp914Knob> items, Dictionary<RoleType, int> health, string bm, string jm, int bt, int bs, int jt, CustomInventory inven, int nukeTime, bool autoNuke, bool enable914, bool enableJoinmessage, bool enableBroadcasting, bool enableInventories, bool clearRag, float clearInt, bool clearItems, bool clearOnlyPocket = false)
+        public EventHandlers(bool uh, Dictionary<Scp914PlayerUpgrade, Scp914Knob> roles, Dictionary<Scp914ItemUpgrade, Scp914Knob> items, Dictionary<RoleType, int> health, string bm, string jm, int bt, int bs, int jt, CustomInventory inven, int nukeTime, bool autoNuke, bool enable914, bool enableJoinmessage, bool enableBroadcasting, bool enableInventories, bool clearRag, float clearInt, bool clearItems, List<RoleType> TeslaIgnoredRoles, bool clearOnlyPocket = false)
         {
             Roles = roles;
             Items = items;
@@ -67,6 +68,7 @@ namespace Common_Utils
             ClearRagInterval = clearInt;
             ClearOnlyPocket = clearOnlyPocket;
             ClearItems = clearItems;
+            this.TeslaIgnoredRoles = TeslaIgnoredRoles;
         }
 
         IEnumerator<float> AutoNuke()
@@ -105,7 +107,7 @@ namespace Common_Utils
                             ev.Machine.UpgradeHeldItem(hub.inventory, hub.characterClassManager, ev.Machine.players);
                     }
 
-                foreach (Pickup item in ev.Items)
+                foreach (Pickup item in ev.Items.ToList())
                 {
                     if (upgradeItems.ContainsKey(item.ItemId))
                     {
@@ -161,7 +163,7 @@ namespace Common_Utils
                 yield return Timing.WaitForSeconds(BSeconds);
                 foreach (ReferenceHub hub in Player.GetHubs())
                 {
-                    Extenstions.Broadcast(hub, (uint)BTime, BMessage);
+                    hub.Broadcast((uint)BTime, BMessage);
                 }
             }
         }
@@ -171,7 +173,7 @@ namespace Common_Utils
             if (!EnableJoinmessage)
                 return;
 
-            Extenstions.Broadcast(ev.Player, (uint)JTime, JMessage.Replace("%player%", ev.Player.nicknameSync.MyNick));
+            ev.Player.Broadcast((uint)JTime, JMessage.Replace("%player%", ev.Player.nicknameSync.MyNick));
         }
 
         internal void RoundStart()
@@ -183,6 +185,35 @@ namespace Common_Utils
                 Coroutines.Add(Timing.RunCoroutine(CleanupRagdolls()));
             if (ClearItems)
                 Coroutines.Add(Timing.RunCoroutine(CleanupItems()));
+            if (Instance.Scp049Healing || Instance.Scp0492Healing)
+                Coroutines.Add(Timing.RunCoroutine(DoScp049Heal()));
+        }
+
+        private IEnumerator<float> DoScp049Heal()
+        {
+            for (;;)
+            {
+                foreach (ReferenceHub hub in Player.GetHubs())
+                    if (hub.GetRole() == RoleType.Scp049)
+                    {
+                        int counter = 0;
+                        foreach (ReferenceHub rh in Player.GetHubs())
+                        {
+                            if (rh.GetRole() != RoleType.Scp0492)
+                                continue;
+                            if (Vector3.Distance(rh.GetPosition(), hub.GetPosition()) < 10f)
+                                counter++;
+                            if (Instance.Scp0492Healing && (rh.GetHealth() + Instance.Scp0492HealAmount) <= rh.playerStats.maxHP)
+                                rh.SetHealth(rh.GetHealth() + Instance.Scp0492HealAmount);
+                        }
+
+                        float healing = (float)Math.Pow(counter, Instance.Scp049HealPow) * Instance.Scp0492HealAmount;
+                        if (Instance.Scp049Healing && (hub.GetHealth() + healing) <= hub.playerStats.maxHP)
+                            hub.SetHealth(hub.GetHealth() + healing);
+                    }
+
+                yield return Timing.WaitForSeconds(5f);
+            }
         }
 
         private IEnumerator<float> CleanupItems()
@@ -208,15 +239,15 @@ namespace Common_Utils
             for (;;)
             {
                 yield return Timing.WaitForSeconds(ClearRagInterval);
-                foreach (Ragdoll ragdoll in UnityEngine.Object.FindObjectsOfType<Ragdoll>())
+                foreach (Ragdoll ragdoll in Object.FindObjectsOfType<Ragdoll>())
                 {
                     if (ClearOnlyPocket)
                     {
                         if (ragdoll.gameObject.transform.position.y < -1000f)
-                            UnityEngine.Object.Destroy(ragdoll.gameObject);
+                            Object.Destroy(ragdoll.gameObject);
                     }
                     else
-                        UnityEngine.Object.Destroy(ragdoll.gameObject);
+                        Object.Destroy(ragdoll.gameObject);
                 }
             }
         }
@@ -231,6 +262,73 @@ namespace Common_Utils
         {
             foreach (CoroutineHandle handle in Coroutines)
                 Timing.KillCoroutines(handle);
+        }
+
+        public void OnTriggerTesla(ref TriggerTeslaEvent ev)
+        {
+            if (TeslaIgnoredRoles.Contains(ev.Player.characterClassManager.CurClass))
+                ev.Triggerable = false;
+        }
+
+        public void OnPlayerSpawn(PlayerSpawnEvent ev)
+        {
+            if (RolesHealth.ContainsKey(ev.Role))
+                Timing.CallDelayed(0.5f, () =>
+                {
+                    ev.Player.playerStats.maxHP = RolesHealth[ev.Role];
+                    ev.Player.playerStats.health = RolesHealth[ev.Role];
+                });
+        }
+
+        public void OnPlayerDeath(ref PlayerDeathEvent ev)
+        {
+            if (ev.Killer.GetRole() == RoleType.Scp096)
+                Scp096KillCount++;
+
+            if (ev.Killer.GetRole().Is939() && Instance.Scp939Healing && Instance.Gen.Next(1, 100) > 50)
+                Coroutines.Add(Timing.RunCoroutine(HealOverTime(ev.Killer, Instance.Scp939Heal), ev.Killer.GetUserId()));
+            
+            if (ev.Killer.GetRole() == RoleType.Scp173 && Instance.Scp173Healing)
+                Coroutines.Add(Timing.RunCoroutine(HealOverTime(ev.Killer, Instance.Scp173HealAmount, 5f), ev.Killer.GetUserId()));
+        }
+
+        public void OnPocketDeath(PocketDimDeathEvent ev)
+        {
+            if (Instance.Scp106Healing)
+            {
+                ReferenceHub scp = Player.GetHubs().FirstOrDefault(r => r.GetRole() == RoleType.Scp106);
+                Coroutines.Add(Timing.RunCoroutine(HealOverTime(scp, Instance.Scp106HealAmount), scp.GetUserId()));
+            }
+        }
+
+        public int Scp096KillCount;
+        public void OnEnrage(ref Scp096EnrageEvent ev)
+        {
+            Scp096KillCount = 0;
+        }
+
+        public void OnCalm(ref Scp096CalmEvent ev)
+        {
+            if (Instance.Scp096Healing)
+                Coroutines.Add(Timing.RunCoroutine(HealOverTime(ev.Player, Instance.Scp096Heal * Scp096KillCount), ev.Player.GetUserId()));
+        }
+
+        public IEnumerator<float> HealOverTime(ReferenceHub hub, int amount, float duration = 10f)
+        {
+            float amountPerTick = amount / duration;
+
+            for (int i = 0; i < duration; i++)
+            {
+                if ((hub.GetHealth() + amountPerTick) > hub.playerStats.maxHP)
+                    break;
+                hub.SetHealth(hub.GetHealth() + amountPerTick);
+                yield return Timing.WaitForSeconds(1f);
+            }
+        }
+
+        public void OnPlayerHurt(ref PlayerHurtEvent ev)
+        {
+            Timing.KillCoroutines(ev.Player.GetUserId());
         }
     }
 }
